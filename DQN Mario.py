@@ -1,6 +1,7 @@
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Input, Dense, Dropout, Activation, Flatten
-from tensorflow.keras.optimizers import Adam
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+
 from collections import deque
 import random
 import tqdm
@@ -39,37 +40,37 @@ SHOW_PREVIEW = True
 # Exploration settings
 EPSILON = 1  # not a constant, going to be decayed
 
+class QNetwork(nn.Module):
+    def __init__(self):
+		super(QNetwork, self).__init__()
+		self.hidden_layer_1 = nn.Linear(inx*iny, 256)
+		self.hidden_layer_2 = nn.Linear(256, 128)
+		self.output_layer = nn.Linear(64, env.action_space.n)
+		
+		self.dropout_layer = nn.Dropout(0.2)
+		
+	def forward(self, x):
+		x = self.hidden_layer_1(x)
+		x = F.relu(x)
+		x = self.dropout_layer(0.2)
+		x = self.hidden_layer_2(x)
+		x = F.relu(x)
+		x = self.output_layer(x)
+		return x
+
 class DQNAgent:
     def __init__(self):
         # gets trained every step
-        self.model = self.create_model()
-
-        # predicts action at every step
-        self.target_model = self.create_model()
-        self.target_model.set_weights(self.model.get_weights())
+        self.policy_model = QNetwork().to(device)
+        self.target_net = QNetwork().to(device)
+		self.target_net.load_state_dict(policy_model.state_dict())
+		self.target_net.eval() #Retire la propa des gradients.
+		
+		self.optimizer = optim.Adam(policy_net.parameters(), lr=1e-3)
 
         self.replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
 
         self.target_update_counter = 0
-
-    def create_model(self):
-        model = Sequential()
-        model.add(Input((inx*iny,)))
-        model.add(Dense(256))
-        model.add(Activation('relu'))
-        model.add(Dropout(0.2))
-
-        model.add(Dense(128))
-        model.add(Activation('relu'))
-        model.add(Dropout(0.2))
-
-        model.add(Flatten())
-        model.add(Dense(64))
-        model.add(Dense(env.action_space.n))
-        model.add(Activation('softmax'))
-        model.compile(loss='mse', optimizer=Adam(lr=0.001), metrics=['accuracy'])
-
-        return model
 
     # (observation space, action, reward, new observation space, done)
     def update_replay_memory(self, transition):
@@ -101,12 +102,23 @@ class DQNAgent:
             current_qs[action] = new_q
             X.append(state)
             y.append(current_qs)
-        self.model.fit(np.array(X).reshape(-1,inx*iny), np.array(y), batch_size=MINIBATCH_SIZE, verbose=0,
-                       shuffle=False if terminal_state else None)
-        if terminal_state:
+		X = torch.from_numpy(np.array(X)).float()
+		y = torch.from_numpy(np.array(y)).long()
+		
+		predicted_value = self.policy_model(X)
+		loss = mse_loss(predicted_value, y)
+		self.optimizer.zero_grad()
+		self.loss.backward()
+		
+		for param in self.policy_model.parameters():
+			param.grad.data.clamp_(-1, 1)
+			
+		self.optimizer.step()
+        
+		if terminal_state:
             self.target_update_counter += 1
         if self.target_update_counter > UPDATE_TARGET_EVERY:
-            self.target_model.set_weights(self.model.get_weights())
+			self.target_net.load_state_dict(self.policy_model.state_dict())
             self.target_update_counter = 0
 
 
